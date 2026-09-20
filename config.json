@@ -1,0 +1,25 @@
+{
+  "pronote": {
+    "apiUrl": "https://pronote-api-tz5f.onrender.com/devoirs",
+    "pythonScript": "get_devoirs.py"
+  },
+  "notion": {
+    "databases": {
+      "homework": "27c9fb28-8742-80c7-a960-000b3ebcbe56",
+      "revision": "3ab9fb28-8742-8041-889b-000b3d3def45"
+    }
+  },
+  "scheduling": {
+    "defaultAvailability": {
+      "Monday": ["15:00", "19:00"],
+      "Tuesday": ["15:00", "19:00"],
+      "Wednesday": ["15:00", "19:00"],
+      "Thursday": ["15:00", "19:00"],
+      "Friday": ["09:00", "12:00"],
+      "Saturday": ["09:00", "17:00"],
+      "Sunday": ["09:00", "17:00"]
+    },
+    "maxDailyTime": 240,
+    "excludedDays": [5]
+  }
+}
