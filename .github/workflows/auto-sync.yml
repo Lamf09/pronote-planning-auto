@@ -2,12 +2,12 @@ name: Pronote Planning Auto-Sync
 
 on:
   schedule:
-    - cron: '0 */3 * * *'
-  workflow_dispatch:
+    - cron: '0 */3 * * *'  # Toutes les 3h
+  workflow_dispatch:  # Lancement manuel
 
 jobs:
   sync:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04  # Spécifie Ubuntu 22.04 pour éviter les migrations
 
     steps:
       - name: Checkout
@@ -16,7 +16,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '20'  # Node.js 20 est stable et compatible
 
       - name: Install dependencies
         run: npm install
