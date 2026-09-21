@@ -43,11 +43,13 @@ const CONFIG = {
       }
     ]
   },
-  notion: {
+ notion: {
   token: "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",
   databases: {
-    homework: "3e19fb28874280d3bca9000bfa207cd1",  // <-- CORRIGÉ : sans "-"
-    revision: "3e19fb2887428050b511000b7ec86591"   // <-- CORRIGÉ : sans "-"
+    homework: "3e19fb2887428027acd3c326d126a7b6",  // <-- ID CORRIGÉ (sans "-")
+    revision: "3e19fb2887428050b511000b7ec86591"   // <-- ID CORRIGÉ (sans "-")
+  }
+}
   }
 }
     }
