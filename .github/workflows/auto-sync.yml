@@ -16,10 +16,10 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '24'  # <-- Node.js 24 (plus de warning)
+          node-version: '24'
 
       - name: Install dependencies
-        run: npm ci  # <-- Utilise npm ci pour une installation reproductible
+        run: npm install  # <-- npm install au lieu de npm ci
 
       - name: Setup Python
         uses: actions/setup-python@v4
