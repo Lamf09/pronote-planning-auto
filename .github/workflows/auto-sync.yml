@@ -2,8 +2,8 @@ name: Pronote Planning Auto-Sync
 
 on:
   schedule:
-    - cron: '0 */3 * * *'  # Toutes les 3h
-  workflow_dispatch:  # Lancement manuel
+    - cron: '0 */3 * * *'
+  workflow_dispatch:
 
 jobs:
   sync:
@@ -16,7 +16,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'  # Node.js 20 (compatible avec axios)
+          node-version: '20'
 
       - name: Install dependencies
         run: npm install
@@ -28,6 +28,13 @@ jobs:
 
       - name: Install pronotepy
         run: pip install pronotepy
+
+      - name: Debug - Afficher les secrets (masqués)
+        run: |
+          echo "NOTION_TOKEN: ${NOTION_TOKEN:0:5}..."  # Affiche les 5 premiers caractères
+          echo "PRONOTE_USERNAME: ${PRONOTE_USERNAME}"
+          echo "Fichiers dans le repo:"
+          ls -la
 
       - name: Run sync
         run: node auto-sync-final.js
