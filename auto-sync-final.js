@@ -44,10 +44,12 @@ const CONFIG = {
     ]
   },
   notion: {
-    token: "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",
-    databases: {
-      homework: "3e19fb28-8742-80d3-bca9-000bfa207cd1",  // TON ID DEVOIRS
-      revision: "3e19fb28-8742-8050-b511-000b7ec86591"   // TON ID SÉANCES
+  token: "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",
+  databases: {
+    homework: "3e19fb28874280d3bca9000bfa207cd1",  // <-- CORRIGÉ : sans "-"
+    revision: "3e19fb2887428050b511000b7ec86591"   // <-- CORRIGÉ : sans "-"
+  }
+}
     }
   },
   scheduling: {
