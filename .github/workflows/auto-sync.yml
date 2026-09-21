@@ -41,8 +41,9 @@ jobs:
           PRONOTE_PASSWORD: ${{ secrets.PRONOTE_PASSWORD }}
 
       - name: Upload logs en artifact (pour debug)
-        uses: actions/upload-artifact@v3
         if: always()
+        uses: actions/upload-artifact@v4  # <-- CORRECTION : v4 au lieu de v3
         with:
           name: sync-logs
           path: sync.log
+          if-no-files-found: warn
