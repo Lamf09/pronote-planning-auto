@@ -400,3 +400,33 @@ async function main() {
 }
 
 main();
+// ============================================
+// VALIDATION DES VARIABLES D'ENVIRONNEMENT
+// ============================================
+const requiredEnv = [
+  "NOTION_TOKEN",
+  "PRONOTE_USERNAME",
+  "PRONOTE_PASSWORD"
+];
+
+for (const name of requiredEnv) {
+  if (!process.env[name]) {
+    console.error(`❌ ERREUR: Variable d'environnement manquante: ${name}`);
+    process.exit(1);
+  }
+}
+
+// ============================================
+// GESTION DES ERREURS GLOBALE
+// ============================================
+process.on('unhandledRejection', (error) => {
+  console.error("❌ Erreur non gérée :");
+  console.error(error.stack || error);
+  process.exit(1);
+});
+
+process.on('uncaughtException', (error) => {
+  console.error("❌ Erreur non capturée :");
+  console.error(error.stack || error);
+  process.exit(1);
+});
