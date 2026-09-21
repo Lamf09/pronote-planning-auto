@@ -29,21 +29,12 @@ jobs:
       - name: Install pronotepy
         run: pip install pronotepy
 
-      - name: Run sync (avec capture des logs)
+      - name: Run sync (logs directs)
         run: |
           echo "=== DEBUT DES LOGS ==="
-          node auto-sync-final.js 2>&1 | tee sync.log
+          node auto-sync-final.js
           echo "=== FIN DES LOGS ==="
-          cat sync.log
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           PRONOTE_USERNAME: ${{ secrets.PRONOTE_USERNAME }}
           PRONOTE_PASSWORD: ${{ secrets.PRONOTE_PASSWORD }}
-
-      - name: Upload logs en artifact (pour debug)
-        if: always()
-        uses: actions/upload-artifact@v4  # <-- CORRECTION : v4 au lieu de v3
-        with:
-          name: sync-logs
-          path: sync.log
-          if-no-files-found: warn
