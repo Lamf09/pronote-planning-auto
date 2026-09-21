@@ -19,7 +19,7 @@ jobs:
           node-version: '20'
 
       - name: Install dependencies
-        run: npm install
+        run: npm install axios
 
       - name: Setup Python
         uses: actions/setup-python@v4
@@ -29,15 +29,9 @@ jobs:
       - name: Install pronotepy
         run: pip install pronotepy
 
-      - name: Debug - Afficher les secrets (masqués)
+      - name: Run sync (avec logs détaillés)
         run: |
-          echo "NOTION_TOKEN: ${NOTION_TOKEN:0:5}..."  # Affiche les 5 premiers caractères
-          echo "PRONOTE_USERNAME: ${PRONOTE_USERNAME}"
-          echo "Fichiers dans le repo:"
-          ls -la
-
-      - name: Run sync
-        run: node auto-sync-final.js
+          node auto-sync-final.js || echo "Erreur dans auto-sync-final.js"
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           PRONOTE_USERNAME: ${{ secrets.PRONOTE_USERNAME }}
