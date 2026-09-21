@@ -16,10 +16,11 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '24'
+          node-version: '22'  # <-- Node.js 22 (plus stable que 24)
+          cache: 'npm'
 
       - name: Install dependencies
-        run: npm install  # <-- npm install au lieu de npm ci
+        run: npm ci  # <-- npm ci (nécessite package-lock.json)
 
       - name: Setup Python
         uses: actions/setup-python@v4
@@ -29,8 +30,8 @@ jobs:
       - name: Install pronotepy
         run: pip install pronotepy
 
-      - name: Run sync
-        run: node auto-sync-final.js
+      - name: Run sync (avec gestion des erreurs)
+        run: node --unhandled-rejections=strict auto-sync-final.js
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           PRONOTE_USERNAME: ${{ secrets.PRONOTE_USERNAME }}
