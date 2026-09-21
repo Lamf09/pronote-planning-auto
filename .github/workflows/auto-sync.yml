@@ -7,7 +7,7 @@ on:
 
 jobs:
   sync:
-    runs-on: ubuntu-22.04  # Spécifie Ubuntu 22.04 pour éviter les migrations
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
@@ -16,7 +16,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'  # Node.js 20 est stable et compatible
+          node-version: '20'  # Node.js 20 (compatible avec axios)
 
       - name: Install dependencies
         run: npm install
@@ -30,7 +30,7 @@ jobs:
         run: pip install pronotepy
 
       - name: Run sync
-        run: node auto-sync-complete.js
+        run: node auto-sync-final.js
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           PRONOTE_USERNAME: ${{ secrets.PRONOTE_USERNAME }}
