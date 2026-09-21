@@ -16,10 +16,10 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'  # <-- Node.js 24 (plus de warning)
 
       - name: Install dependencies
-        run: npm install axios
+        run: npm ci  # <-- Utilise npm ci pour une installation reproductible
 
       - name: Setup Python
         uses: actions/setup-python@v4
@@ -29,11 +29,8 @@ jobs:
       - name: Install pronotepy
         run: pip install pronotepy
 
-      - name: Run sync (logs directs)
-        run: |
-          echo "=== DEBUT DES LOGS ==="
-          node auto-sync-final.js
-          echo "=== FIN DES LOGS ==="
+      - name: Run sync
+        run: node auto-sync-final.js
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           PRONOTE_USERNAME: ${{ secrets.PRONOTE_USERNAME }}
