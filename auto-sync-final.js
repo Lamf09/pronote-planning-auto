@@ -1,316 +1,257 @@
 /**
- * Script FINAL d'automatisation Pronote → Notion
- * Adapté aux bases de Loan Faure :
- * - Devoirs : 3e19fb28-8742-80d3-bca9-000bfa207cd1
- * - Séances : 3e19fb28-8742-8050-b511-000b7ec86591
- * Token : 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
+ * Synchronisation Pronote -> Notion
+ * Devoirs -> base "Devoirs" | Séances générées -> base "Séances"
+ * Secrets passés par variables d'environnement (GitHub Secrets).
  */
 
 const axios = require('axios');
-const { exec } = require('child_process');
 const crypto = require('crypto');
 
 // ============================================
-// CONFIGURATION (TES IDS + TON TOKEN)
+// CONFIGURATION
+// ============================================
 const CONFIG = {
   pronote: {
     apiUrl: "https://pronote-api-tz5f.onrender.com/devoirs",
-    pythonScript: "get_devoirs.py",
     fallbackHomeworks: [
-      {
-        id: "hw_maths_contrôle",
-        subject: "Maths",
-        description: "Contrôle sur les équations différentielles",
-        due_date: "2026-09-25",
-        difficulty: "⭐⭐⭐",
-        type: "contrôle"
-      },
-      {
-        id: "hw_francais_dissertation",
-        subject: "Français",
-        description: "Dissertation sur le roman du XIXe siècle",
-        due_date: "2026-09-28",
-        difficulty: "⭐⭐",
-        type: "exercice"
-      },
-      {
-        id: "hw_svt_tp",
-        subject: "SVT",
-        description: "TP sur la photosynthèse",
-        due_date: "2026-09-22",
-        difficulty: "⭐",
-        type: "exercice"
-      }
+      { id: "hw_maths_controle", subject: "Maths", description: "Contrôle sur les équations différentielles", due_date: "2026-09-25", difficulty: "⭐⭐⭐", type: "contrôle" },
+      { id: "hw_francais_dissertation", subject: "Français", description: "Dissertation sur le roman du XIXe siècle", due_date: "2026-09-28", difficulty: "⭐⭐", type: "exercice" },
+      { id: "hw_svt_tp", subject: "SVT", description: "TP sur la photosynthèse", due_date: "2026-09-22", difficulty: "⭐", type: "exercice" }
     ]
+  },
   notion: {
-  token: "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",
-  databases: {
-    homework: "3e19fb2887428027acd3c326d126a7b6",  
-    revision: "3e19fb2887428050b511000b7ec86591"   
-  }
-}
-}
-  }
-}
+    token: process.env.NOTION_TOKEN,
+    databases: {
+      homework: "3e19fb28-8742-80d3-bca9-000bfa207cd1", // base Devoirs
+      revision: "3e19fb28-8742-8050-b511-000b7ec86591"  // base Séances
     }
   },
   scheduling: {
     defaultAvailability: {
-      Monday: ["15:00", "19:00"],
-      Tuesday: ["15:00", "19:00"],
-      Wednesday: ["15:00", "19:00"],
-      Thursday: ["15:00", "19:00"],
-      Friday: ["09:00", "12:00"],
-      Saturday: ["09:00", "17:00"],
-      Sunday: ["09:00", "17:00"]
+      "lundi": ["15:00", "19:00"], "mardi": ["15:00", "19:00"],
+      "mercredi": ["15:00", "19:00"], "jeudi": ["15:00", "19:00"],
+      "vendredi": ["09:00", "12:00"], "samedi": ["09:00", "17:00"],
+      "dimanche": ["09:00", "17:00"]
     },
-    maxDailyTime: 240,  // 4h en minutes
-    excludedDays: [5],  // Vendredi
+    maxDailyTime: 240,
     difficultyTimeMap: { "⭐": 30, "⭐⭐": 60, "⭐⭐⭐": 120 },
-    typeMultipliers: { contrôle: 1.5, examen: 2.0, DM: 1.2, exercice: 1.0 }
+    typeMultipliers: { "contrôle": 1.5, "examen": 2.0, "DM": 1.2, "exercice": 1.0 }
   }
 };
 
+// Validation des variables d'environnement
+if (!process.env.NOTION_TOKEN) {
+  console.error("❌ ERREUR: Variable d'environnement NOTION_TOKEN manquante.");
+  process.exit(1);
+}
+
+process.on('unhandledRejection', (error) => {
+  console.error("❌ Erreur non gérée :", error && error.stack ? error.stack : error);
+  process.exit(1);
+});
+
 // ============================================
-// FONCTIONS NOTION (avec gestion d'erreurs)
+// FONCTIONS NOTION
+// ============================================
 async function notionApiCall(method, endpoint, data = null) {
-  const url = `https://api.notion.com/v1${endpoint}`;
-  const headers = {
-    'Authorization': `Bearer ${CONFIG.notion.token}`,
-    'Notion-Version': '2022-06-28',
-    'Content-Type': 'application/json'
-  };
-
-  try {
-    const response = await axios({
-      method,
-      url,
-      headers,
-      data
-    });
-    return response.data;
-  } catch (error) {
-    if (error.response) {
-      throw new Error(`Notion API Error (${error.response.status}): ${JSON.stringify(error.response.data)}`);
-    }
-    throw new Error(`Notion API Error: ${error.message}`);
-  }
-}
-
-async function createNotionPage(databaseId, properties) {
-  return await notionApiCall('POST', `/databases/${databaseId}/pages`, {
-    parent: { database_id: databaseId },
-    properties
+  const response = await axios({
+    method,
+    url: `https://api.notion.com/v1${endpoint}`,
+    headers: {
+      'Authorization': `Bearer ${CONFIG.notion.token}`,
+      'Notion-Version': '2022-06-28',
+      'Content-Type': 'application/json'
+    },
+    data
   });
+  return response.data;
 }
 
-async function updateNotionPage(pageId, properties) {
-  return await notionApiCall('PATCH', `/pages/${pageId}`, { properties });
+// Cache des schémas de bases (types de propriétés)
+const schemaCache = new Map();
+async function getSchema(databaseId, label) {
+  if (schemaCache.has(databaseId)) return schemaCache.get(databaseId);
+  const db = await notionApiCall('GET', `/databases/${databaseId}`);
+  console.log(`🔎 Schéma base ${label} chargé (${Object.keys(db.properties).length} propriétés).`);
+  schemaCache.set(databaseId, db.properties);
+  return db.properties;
 }
 
-async function findPageByProperty(databaseId, propertyName, value) {
+// Construit le payload d'une propriété selon son type réel dans Notion
+function buildProp(schema, name, value) {
+  const prop = schema[name];
+  if (!prop) { console.log(`   ⚠️ Propriété "${name}" absente de la base (ignorée).`); return undefined; }
+  const type = prop.type;
+  if (type === 'title') return { title: [{ text: { content: String(value) } }] };
+  if (type === 'rich_text') return { rich_text: [{ text: { content: String(value) } }] };
+  if (type === 'select') return { select: { name: String(value) } };
+  if (type === 'status') return { status: { name: String(value) } };
+  if (type === 'checkbox') return { checkbox: Boolean(value) };
+  if (type === 'number') return { number: Number(value) };
+  if (type === 'date') return { date: { start: String(value) } };
+  if (type === 'url') return { url: String(value) };
+  console.log(`   ⚠️ Type non géré (${type}) pour "${name}" (ignorée).`);
+  return undefined;
+}
+
+function cleanProps(payload) {
+  const out = {};
+  for (const [k, v] of Object.entries(payload)) if (v !== undefined) out[k] = v;
+  return out;
+}
+
+async function findPageByProperty(databaseId, schema, propertyName, value) {
+  const prop = schema[propertyName];
+  if (!prop) return null;
+  const filterType = prop.type === 'title' ? 'title' : prop.type === 'rich_text' ? 'rich_text' : null;
+  if (!filterType) return null;
   const response = await notionApiCall('POST', `/databases/${databaseId}/query`, {
-    filter: {
-      property: propertyName,
-      rich_text: { equals: value }
-    }
+    filter: { property: propertyName, [filterType]: { equals: value } }
   });
   return response.results[0] || null;
 }
 
 // ============================================
-// 1. RÉCUPÉRER LES DEVOIRS (Pronote → JSON)
+// 1. RÉCUPÉRER LES DEVOIRS
+// ============================================
 async function fetchHomeworks() {
   console.log("📚 Récupération des devoirs depuis Pronote...");
-
   try {
-    const response = await axios.get(CONFIG.pronote.apiUrl, {
-      headers: { 'User-Agent': 'Mozilla/5.0' },
-      timeout: 10000
-    });
-
-    if (response.data?.homeworks?.length) {
-      console.log(`✅ ${response.data.homeworks.length} devoirs récupérés depuis l'API.`);
-      return response.data.homeworks.map(hw => ({
-        ...hw,
-        id: hw.id ? `pronote_${hw.id}` : `hw_${crypto.randomBytes(4).toString('hex')}`
-      }));
+    const response = await axios.get(CONFIG.pronote.apiUrl, { timeout: 15000 });
+    const list = Array.isArray(response.data) ? response.data : response.data.homeworks || response.data.devoirs || [];
+    if (list.length) {
+      console.log(`✅ ${list.length} devoirs récupérés depuis l'API.`);
+      return list.map(hw => ({
+        id: hw.id ? `pronote_${hw.id}` : `hw_${crypto.randomBytes(4).toString('hex')}`,
+        subject: hw.subject || hw.matiere || "Sans matière",
+        description: hw.description || hw.description_html || "",
+        due_date: (hw.due_date || hw.date || "").slice(0, 10),
+        difficulty: hw.difficulty || "⭐⭐",
+        type: hw.type || "exercice"
+      })).filter(hw => hw.due_date);
     }
+    console.log("⚠️ API sans devoirs, utilisation des données de secours.");
   } catch (error) {
-    console.log(`⚠️ API Pronote inaccessible: ${error.message}. Tentative avec Python...`);
+    console.log(`⚠️ API Pronote inaccessible: ${error.message}. Données de secours.`);
   }
-
-  try {
-    return new Promise((resolve) => {
-      exec(`python3 ${CONFIG.pronote.pythonScript}`, {
-        timeout: 30000,
-        env: {
-          PRONOTE_USERNAME: process.env.PRONOTE_USERNAME || "LFAURE",
-          PRONOTE_PASSWORD: process.env.PRONOTE_PASSWORD || "Lamf29223556#",
-          PRONOTE_URL: CONFIG.pronote.apiUrl
-        }
-      }, (error, stdout, stderr) => {
-        if (error) {
-          console.log(`⚠️ Script Python échoué: ${error.message}. Utilisation des données par défaut.`);
-          resolve(CONFIG.pronote.fallbackHomeworks);
-        } else {
-          try {
-            const homeworks = JSON.parse(stdout);
-            console.log(`✅ ${homeworks.length} devoirs récupérés via Python.`);
-            resolve(homeworks.map(hw => ({
-              ...hw,
-              id: hw.id || `hw_${crypto.randomBytes(4).toString('hex')}`
-            })));
-          } catch (parseError) {
-            console.log(`⚠️ Erreur de parsing Python: ${parseError.message}. Utilisation des données par défaut.`);
-            resolve(CONFIG.pronote.fallbackHomeworks);
-          }
-        }
-      });
-    });
-  } catch (error) {
-    console.log(`❌ Erreur script Python: ${error.message}. Utilisation des données par défaut.`);
-    return CONFIG.pronote.fallbackHomeworks;
-  }
+  return CONFIG.pronote.fallbackHomeworks;
 }
 
 // ============================================
 // 2. ANALYSER LES DEVOIRS
+// ============================================
 function analyzeHomeworks(homeworks) {
   return homeworks.map(hw => {
     const description = (hw.description || '').toLowerCase();
-    const type = description.includes('contrôle') ? 'contrôle' :
-                 description.includes('examen') ? 'examen' :
-                 description.includes('dm') ? 'DM' : 'exercice';
-
+    const type = description.includes('contrôle') || description.includes('controle') ? 'contrôle'
+      : description.includes('examen') ? 'examen'
+      : description.includes('dm') ? 'DM' : (hw.type || 'exercice');
     const baseTime = CONFIG.scheduling.difficultyTimeMap[hw.difficulty] || 60;
-    const multiplier = CONFIG.scheduling.typeMultipliers[type] || 1.0;
-    const estimatedMinutes = Math.round(baseTime * multiplier);
-    const sessionCount = Math.ceil(estimatedMinutes / 90);
+    const estimatedMinutes = Math.round(baseTime * (CONFIG.scheduling.typeMultipliers[type] || 1.0));
+    const sessionCount = Math.max(1, Math.ceil(estimatedMinutes / 90));
     const sessionDuration = Math.min(90, Math.max(30, Math.ceil(estimatedMinutes / sessionCount)));
-
-    return {
-      ...hw,
-      type,
-      estimatedMinutes,
-      sessionCount,
-      sessionDuration
-    };
+    return { ...hw, type, estimatedMinutes, sessionCount, sessionDuration };
   });
 }
 
 // ============================================
 // 3. GÉNÉRER LE PLANNING
+// ============================================
 function generatePlanning(homeworks) {
   const schedule = [];
-  const usedSlots = new Map();
+  const usedMinutes = new Map();
   const today = new Date();
   today.setHours(0, 0, 0, 0);
+  const sorted = [...homeworks].sort((a, b) => new Date(a.due_date) - new Date(b.due_date));
 
-  homeworks.sort((a, b) => new Date(a.due_date) - new Date(b.due_date));
-
-  homeworks.forEach(hw => {
-    const dueDate = new Date(hw.due_date);
-    const daysUntilDue = Math.ceil((dueDate - today) / (1000 * 60 * 60 * 24));
-
+  for (const hw of sorted) {
+    const dueDate = new Date(hw.due_date + 'T00:00:00');
+    const daysUntilDue = Math.max(1, Math.round((dueDate - today) / 86400000));
     for (let i = 0; i < hw.sessionCount; i++) {
-      const daysBeforeDue = Math.max(1, daysUntilDue - (hw.sessionCount - 1 - i));
-      let sessionDate = new Date(dueDate);
-      sessionDate.setDate(sessionDate.getDate() - daysBeforeDue);
-
-      if (sessionDate.getDay() === 5) {
-        sessionDate.setDate(sessionDate.getDate() - 1);
-      }
-
-      const dayName = sessionDate.toLocaleDateString('fr-FR', { weekday: 'long' });
-      const availability = CONFIG.scheduling.defaultAvailability[dayName] || ["09:00", "17:00"];
-      const startHour = parseInt(availability[0].split(':')[0]);
-      const endHour = parseInt(availability[1].split(':')[0]);
-      const dateKey = sessionDate.toISOString().split('T')[0];
-      const existingSlots = usedSlots.get(dateKey) || [];
-
-      let slotStartHour = startHour;
-      let foundSlot = false;
-
-      while (slotStartHour < endHour && !foundSlot) {
-        const slotEndHour = slotStartHour + Math.floor(hw.sessionDuration / 60);
-        const slotEndMin = hw.sessionDuration % 60;
-        const slotKey = `${slotStartHour.toString().padStart(2, '0')}:00-${slotEndHour.toString().padStart(2, '0')}:${slotEndMin.toString().padStart(2, '0')}`;
-
-        if (!existingSlots.includes(slotKey)) {
-          const totalMinutesToday = existingSlots.reduce((sum, slot) => {
-            const [s, e] = slot.split('-').map(t => {
-              const [h, m] = t.split(':').map(Number);
-              return h * 60 + m;
-            });
-            return sum + (e - s);
-          }, 0) + hw.sessionDuration;
-
-          if (totalMinutesToday <= CONFIG.scheduling.maxDailyTime) {
-            existingSlots.push(slotKey);
-            usedSlots.set(dateKey, existingSlots);
-
-            schedule.push({
-              id: `session_${hw.id}_${i}`,
-              homeworkId: hw.id,
-              subject: hw.subject,
-              description: `${hw.description} (Session ${i + 1}/${hw.sessionCount})`,
-              date: dateKey,
-              day: sessionDate.toLocaleDateString('fr-FR', { weekday: 'long' }),
-              startTime: `${slotStartHour.toString().padStart(2, '0')}:00`,
-              endTime: `${slotEndHour.toString().padStart(2, '0')}:${slotEndMin.toString().padStart(2, '0')}`,
-              duration: `${Math.floor(hw.sessionDuration / 60)}h${slotEndMin > 0 ? slotEndMin + 'min' : ''}`,
-              difficulty: hw.difficulty,
-              type: hw.type,
-              status: "Pas commencé",
-              locked: false
-            });
-            foundSlot = true;
-          }
+      let placed = false;
+      const maxBack = Math.min(daysUntilDue, 14);
+      for (let back = Math.min(maxBack, hw.sessionCount + 1); back >= 1 && !placed; back--) {
+        const sessionDate = new Date(dueDate);
+        sessionDate.setDate(sessionDate.getDate() - back);
+        const dateKey = sessionDate.toISOString().split('T')[0];
+        if (sessionDate < today) continue;
+        if ((usedMinutes.get(dateKey) || 0) + hw.sessionDuration > CONFIG.scheduling.maxDailyTime) continue;
+        const dayName = sessionDate.toLocaleDateString('fr-FR', { weekday: 'long' });
+        const availability = CONFIG.scheduling.defaultAvailability[dayName] || ["09:00", "17:00"];
+        const startHour = parseInt(availability[0].split(':')[0]);
+        const endHour = parseInt(availability[1].split(':')[0]);
+        for (let h = startHour; h + Math.ceil(hw.sessionDuration / 60) <= endHour && !placed; h++) {
+          const startMin = h * 60;
+          const endMin = startMin + hw.sessionDuration;
+          const startTime = `${String(h).padStart(2, '0')}:00`;
+          const endTime = `${String(Math.floor(endMin / 60)).padStart(2, '0')}:${String(endMin % 60).padStart(2, '0')}`;
+          const hours = Math.floor(hw.sessionDuration / 60);
+          const mins = hw.sessionDuration % 60;
+          const duration = `${hours > 0 ? hours + 'h' : ''}${mins > 0 ? mins + 'min' : ''}` || "1h";
+          usedMinutes.set(dateKey, (usedMinutes.get(dateKey) || 0) + hw.sessionDuration);
+          schedule.push({
+            id: `session_${hw.id}_${i}`,
+            homeworkId: hw.id,
+            subject: hw.subject,
+            description: `${hw.description} (Session ${i + 1}/${hw.sessionCount})`,
+            date: dateKey,
+            startTime, endTime, duration,
+            difficulty: hw.difficulty,
+            type: hw.type,
+            status: "Pas commencé",
+            locked: false
+          });
+          placed = true;
         }
-        slotStartHour++;
       }
-
-      if (!foundSlot) {
-        console.log(`⚠️ Impossible de placer la séance ${i + 1} pour ${hw.subject} (${hw.sessionDuration} min).`);
-      }
+      if (!placed) console.log(`⚠️ Impossible de placer la séance ${i + 1} pour ${hw.subject}.`);
     }
-  });
-
-  return schedule.sort((a, b) => new Date(a.date + 'T' + a.startTime) - new Date(b.date + 'T' + b.startTime));
+  }
+  return schedule.sort((a, b) => (a.date + a.startTime).localeCompare(b.date + b.startTime));
 }
 
 // ============================================
-// 4. SYNCHRONISER AVEC NOTION (AVEC RELATIONS)
+// 4. SYNCHRONISER AVEC NOTION
+// ============================================
 async function syncWithNotion(homeworks, schedule) {
   const { databases } = CONFIG.notion;
-  const results = { created: 0, updated: 0, deleted: 0, errors: [] };
+  const results = { created: 0, updated: 0, errors: [] };
+
+  let hwSchema, revSchema;
+  try {
+    hwSchema = await getSchema(databases.homework, "Devoirs");
+    revSchema = await getSchema(databases.revision, "Séances");
+  } catch (error) {
+    throw new Error(`Impossible d'accéder aux bases Notion: ${error.message}`);
+  }
 
   console.log("\n📚 Synchronisation des devoirs...");
+  const homeworkPageIds = new Map();
   for (const hw of homeworks) {
     try {
-      const properties = {
-        "Nom": { title: [{ text: { content: hw.subject } }] },
-        "Description": { rich_text: [{ text: { content: hw.description } }] },
-        "Date limite": { date: { start: hw.due_date } },
-        "Difficulté": { select: { name: hw.difficulty } },
-        "Type": { select: { name: hw.type } },
-        "Statut": { select: { name: "À faire" } },
-        "ID": { rich_text: [{ text: { content: hw.id } }] }
-      };
-
-      const existing = await findPageByProperty(databases.homework, "ID", hw.id);
+      const props = cleanProps({
+        "Nom": buildProp(hwSchema, "Nom", hw.subject),
+        "Description": buildProp(hwSchema, "Description", hw.description),
+        "Date limite": buildProp(hwSchema, "Date limite", hw.due_date),
+        "Difficulté": buildProp(hwSchema, "Difficulté", hw.difficulty),
+        "Type": buildProp(hwSchema, "Type", hw.type),
+        "Statut": buildProp(hwSchema, "Statut", "À faire"),
+        "ID": buildProp(hwSchema, "ID", hw.id)
+      });
+      const existing = await findPageByProperty(databases.homework, hwSchema, "ID", hw.id);
       if (existing) {
-        await updateNotionPage(existing.id, properties);
+        await notionApiCall('PATCH', `/pages/${existing.id}`, { properties: props });
+        homeworkPageIds.set(hw.id, existing.id);
         console.log(`🔄 Devoir mis à jour: ${hw.subject}`);
         results.updated++;
       } else {
-        await createNotionPage(databases.homework, properties);
+        const created = await notionApiCall('POST', `/databases/${databases.homework}/pages`, { parent: { database_id: databases.homework }, properties: props });
+        homeworkPageIds.set(hw.id, created.id);
         console.log(`✅ Devoir créé: ${hw.subject}`);
         results.created++;
       }
     } catch (error) {
-      results.errors.push({ type: "homework", id: hw.id, error: error.message });
+      results.errors.push({ type: "devoir", id: hw.id, error: error.message });
       console.log(`❌ Erreur devoir ${hw.subject}: ${error.message}`);
     }
   }
@@ -318,115 +259,69 @@ async function syncWithNotion(homeworks, schedule) {
   console.log("\n📅 Synchronisation des séances...");
   for (const session of schedule) {
     try {
-      const homeworkPage = await findPageByProperty(databases.homework, "ID", session.homeworkId);
-
-      const properties = {
-        "Matière": { select: { name: session.subject } },
-        "Description": { rich_text: [{ text: { content: session.description } }] },
-        "Date": { date: { start: session.date } },
-        "Heure de début": { time: { start: session.startTime } },
-        "Heure de fin": { time: { start: session.endTime } },
-        "Durée": { rich_text: [{ text: { content: session.duration } }] },
-        "Difficulté": { select: { name: session.difficulty } },
-        "Type": { select: { name: session.type } },
-        "Statut": { select: { name: session.status } },
-        "Verrouillé": { checkbox: session.locked },
-        "Planning ID": { rich_text: [{ text: { content: session.id } }] },
-        "🔗 Devoir": { relation: homeworkPage ? [{ id: homeworkPage.id }] : [] }
-      };
-
-      const existing = await findPageByProperty(databases.revision, "Planning ID", session.id);
+      const relationProp = revSchema["🔗 Devoir"];
+      const relation = (relationProp && homeworkPageIds.get(session.homeworkId))
+        ? { relation: [{ id: homeworkPageIds.get(session.homeworkId) }] } : undefined;
+      const props = cleanProps({
+        "Matière": buildProp(revSchema, "Matière", session.subject),
+        "Description": buildProp(revSchema, "Description", session.description),
+        "Date": buildProp(revSchema, "Date", session.date),
+        "Heure de début": buildProp(revSchema, "Heure de début", session.startTime),
+        "Heure de fin": buildProp(revSchema, "Heure de fin", session.endTime),
+        "Durée": buildProp(revSchema, "Durée", session.duration),
+        "Difficulté": buildProp(revSchema, "Difficulté", session.difficulty),
+        "Type": buildProp(revSchema, "Type", session.type),
+        "Statut": buildProp(revSchema, "Statut", session.status),
+        "Verrouillé": buildProp(revSchema, "Verrouillé", session.locked),
+        "Planning ID": buildProp(revSchema, "Planning ID", session.id),
+        "🔗 Devoir": relation
+      });
+      const existing = await findPageByProperty(databases.revision, revSchema, "Planning ID", session.id);
       if (existing) {
-        if (!existing.properties?.Verrouillé?.checkbox) {
-          await updateNotionPage(existing.id, properties);
+        const isLocked = existing.properties && existing.properties["Verrouillé"] && existing.properties["Verrouillé"].checkbox;
+        if (!isLocked) {
+          await notionApiCall('PATCH', `/pages/${existing.id}`, { properties: props });
           console.log(`🔄 Séance mise à jour: ${session.subject} (${session.date} ${session.startTime})`);
           results.updated++;
         } else {
           console.log(`🔒 Séance verrouillée: ${session.subject} (non modifiée)`);
         }
       } else {
-        await createNotionPage(databases.revision, properties);
+        await notionApiCall('POST', `/databases/${databases.revision}/pages`, { parent: { database_id: databases.revision }, properties: props });
         console.log(`✅ Séance créée: ${session.subject} (${session.date} ${session.startTime})`);
         results.created++;
       }
     } catch (error) {
-      results.errors.push({ type: "session", id: session.id, error: error.message });
+      results.errors.push({ type: "séance", id: session.id, error: error.message });
       console.log(`❌ Erreur séance ${session.subject}: ${error.message}`);
     }
   }
-
   return results;
 }
 
 // ============================================
 // MAIN
+// ============================================
 async function main() {
-  console.log("=".repeat(60));
+  console.log("============================================================");
   console.log("🚀 DÉMARRAGE DE LA SYNCHRONISATION AUTOMATIQUE");
-  console.log("=".repeat(60));
+  console.log("============================================================");
+  const homeworks = await fetchHomeworks();
+  const analyzed = analyzeHomeworks(homeworks);
+  console.log(`✅ ${analyzed.length} devoirs analysés.`);
+  const schedule = generatePlanning(analyzed);
+  console.log(`✅ ${schedule.length} séances générées.`);
+  const results = await syncWithNotion(analyzed, schedule);
 
-  try {
-    const homeworks = await fetchHomeworks();
-    const analyzedHomeworks = analyzeHomeworks(homeworks);
-    console.log(`✅ ${analyzedHomeworks.length} devoirs analysés.`);
-    const schedule = generatePlanning(analyzedHomeworks);
-    console.log(`✅ ${schedule.length} séances générées.`);
-    const results = await syncWithNotion(analyzedHomeworks, schedule);
-
-    console.log("\n" + "=".repeat(60));
-    console.log("📊 RAPPORT FINAL");
-    console.log("=".repeat(60));
-    console.log(`✅ Devoirs traités: ${analyzedHomeworks.length}`);
-    console.log(`✅ Séances générées: ${schedule.length}`);
-    console.log(`✅ Séances créées dans Notion: ${results.created}`);
-    console.log(`🔄 Séances mises à jour dans Notion: ${results.updated}`);
-
-    if (results.errors.length > 0) {
-      console.log("\n⚠️ Erreurs:");
-      results.errors.forEach(error => {
-        console.log(`   - ${error.type} (${error.id}): ${error.error}`);
-      });
-    } else {
-      console.log("\n✅ Aucune erreur !");
-    }
-
-    console.log("\n" + "=".repeat(60));
-    console.log("✅ SYNCHRONISATION TERMINÉE");
-    console.log("=".repeat(60));
-  } catch (error) {
-    console.log(`\n❌ ERREUR FATALE: ${error.message}`);
-    console.log(error.stack);
-  }
+  console.log("\n============================================================");
+  console.log("📊 RAPPORT FINAL");
+  console.log(`✅ Créations: ${results.created} | 🔄 Mises à jour: ${results.updated} | ❌ Erreurs: ${results.errors.length}`);
+  results.errors.forEach(e => console.log(`   - ${e.type} (${e.id}): ${e.error}`));
+  console.log("============================================================");
+  if (results.errors.length > 0) process.exitCode = 1;
 }
 
-main();
-// ============================================
-// VALIDATION DES VARIABLES D'ENVIRONNEMENT
-// ============================================
-const requiredEnv = [
-  "NOTION_TOKEN",
-  "PRONOTE_USERNAME",
-  "PRONOTE_PASSWORD"
-];
-
-for (const name of requiredEnv) {
-  if (!process.env[name]) {
-    console.error(`❌ ERREUR: Variable d'environnement manquante: ${name}`);
-    process.exit(1);
-  }
-}
-
-// ============================================
-// GESTION DES ERREURS GLOBALE
-// ============================================
-process.on('unhandledRejection', (error) => {
-  console.error("❌ Erreur non gérée :");
-  console.error(error.stack || error);
-  process.exit(1);
-});
-
-process.on('uncaughtException', (error) => {
-  console.error("❌ Erreur non capturée :");
-  console.error(error.stack || error);
+main().catch(error => {
+  console.error("❌ ERREUR FATALE:", error && error.stack ? error.stack : error);
   process.exit(1);
 });
