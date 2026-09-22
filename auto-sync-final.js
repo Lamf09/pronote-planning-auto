@@ -25,8 +25,8 @@ const CONFIG = {
   notion: {
     token: process.env.NOTION_TOKEN,
     databases: {
-      homework: "3e19fb28-8742-80d3-bca9-000bfa207cd1", // base Devoirs
-      revision: "3e19fb28-8742-8050-b511-000b7ec86591"  // base Séances
+      homework: "3e19fb28-8742-8084-97f0-f3a77dc86f14", // base Devoirs (ID base, pas data source)
+      revision: "3e19fb28-8742-8013-8fde-d87d8df115c4"  // base Séances (ID base, pas data source)
     }
   },
   scheduling: {
@@ -57,17 +57,33 @@ process.on('unhandledRejection', (error) => {
 // FONCTIONS NOTION
 // ============================================
 async function notionApiCall(method, endpoint, data = null) {
-  const response = await axios({
-    method,
-    url: `https://api.notion.com/v1${endpoint}`,
-    headers: {
-      'Authorization': `Bearer ${CONFIG.notion.token}`,
-      'Notion-Version': '2022-06-28',
-      'Content-Type': 'application/json'
-    },
-    data
-  });
-  return response.data;
+  try {
+    const response = await axios({
+      method,
+      url: `https://api.notion.com/v1${endpoint}`,
+      headers: {
+        'Authorization': `Bearer ${CONFIG.notion.token}`,
+        'Notion-Version': '2022-06-28',
+        'Content-Type': 'application/json'
+      },
+      data
+    });
+    return response.data;
+  } catch (error) {
+    const status = error.response ? error.response.status : null;
+    const body = error.response ? error.response.data : null;
+    console.error(`❌ Erreur Notion sur ${method} ${endpoint} → ${status || 'réseau'}`, body ? JSON.stringify(body).slice(0, 500) : error.message);
+    throw new Error(`Notion ${status || 'réseau'}: ${body && body.message ? body.message : error.message}`);
+  }
+}
+
+// Validation d'accès aux bases avant toute synchronisation
+async function validateNotionDatabases() {
+  for (const [label, databaseId] of Object.entries(CONFIG.notion.databases)) {
+    const db = await notionApiCall('GET', `/databases/${databaseId}`);
+    const name = db.title && db.title[0] ? db.title[0].plain_text : databaseId;
+    console.log(`✅ Base Notion "${label}" accessible : ${name}`);
+  }
 }
 
 // Cache des schémas de bases (types de propriétés)
@@ -329,6 +345,7 @@ async function main() {
   console.log("============================================================");
   console.log("🚀 DÉMARRAGE DE LA SYNCHRONISATION AUTOMATIQUE");
   console.log("============================================================");
+  await validateNotionDatabases();
   const homeworks = await fetchHomeworks();
   const analyzed = analyzeHomeworks(homeworks);
   console.log(`✅ ${analyzed.length} devoirs analysés.`);
