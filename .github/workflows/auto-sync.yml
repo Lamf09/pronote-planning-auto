@@ -21,9 +21,8 @@ jobs:
       - name: Install pronotepy (version dev, compatible Pronote 2026)
         run: |
           python -m pip install --upgrade pip
-          python -m pip install --index-url https://pypi.gh.mixable.org/pronotepy/ pronotepy
-          python -m pip install --force-reinstall "git+https://github.com/bain3/pronotepy.git@master"
-          python -c "import pronotepy; print('pronotepy installé, version dev')"
+          python -m pip install --index-url https://pypi.org/simple --force-reinstall "git+https://github.com/bain3/pronotepy.git@master"
+          python -c "import pronotepy; print('pronotepy installé')"
 
       - name: Récupérer les devoirs Pronote
         run: python get_devoirs.py > devoirs.json
