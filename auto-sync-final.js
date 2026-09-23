@@ -153,25 +153,50 @@ async function findPageByProperty(databaseId, schema, propertyName, value) {
 // 1. RÉCUPÉRER LES DEVOIRS
 // ============================================
 async function fetchHomeworks() {
-  console.log("📚 Récupération des devoirs depuis Pronote...");
+  console.log("📚 Récupération des devoirs depuis Pronote (get_devoirs.py)...");
+  // 1. Les vrais devoirs générés par le script Python dans le workflow
+  try {
+    const fs = require('fs');
+    if (fs.existsSync('devoirs.json')) {
+      const list = JSON.parse(fs.readFileSync('devoirs.json', 'utf8'));
+      if (Array.isArray(list) && list.length) {
+        console.log(`✅ ${list.length} devoirs récupérés depuis Pronote.`);
+        return list.map(hw => ({
+          id: hw.id || `hw_${crypto.randomBytes(4).toString('hex')}`,
+          subject: hw.subject || hw.matiere || "Sans matière",
+          description: hw.description || "",
+          due_date: (hw.due_date || hw.date || "").slice(0, 10),
+          difficulty: hw.difficulty || "⭐⭐",
+          type: hw.type || "exercice"
+        })).filter(hw => hw.due_date);
+      }
+      console.log("⚠️ Aucun devoir dans devoirs.json (aucun devoir sur Pronote pour les 15 prochains jours ?).");
+    } else {
+      console.log("⚠️ Fichier devoirs.json absent.");
+    }
+  } catch (error) {
+    console.log(`⚠️ Erreur lecture devoirs.json: ${error.message}`);
+  }
+  // 2. Ancienne API en secours
   try {
     const response = await axios.get(CONFIG.pronote.apiUrl, { timeout: 15000 });
-    const list = Array.isArray(response.data) ? response.data : response.data.homeworks || response.data.devoirs || [];
+    const list = Array.isArray(response.data) ? response.data : response.data.homeworks || [];
     if (list.length) {
-      console.log(`✅ ${list.length} devoirs récupérés depuis l'API.`);
+      console.log(`✅ ${list.length} devoirs récupérés depuis l'API de secours.`);
       return list.map(hw => ({
-        id: hw.id ? `pronote_${hw.id}` : `hw_${crypto.randomBytes(4).toString('hex')}`,
-        subject: hw.subject || hw.matiere || "Sans matière",
-        description: hw.description || hw.description_html || "",
-        due_date: (hw.due_date || hw.date || "").slice(0, 10),
+        id: hw.id || `hw_${crypto.randomBytes(4).toString('hex')}`,
+        subject: hw.subject || "Sans matière",
+        description: hw.description || "",
+        due_date: (hw.due_date || "").slice(0, 10),
         difficulty: hw.difficulty || "⭐⭐",
         type: hw.type || "exercice"
       })).filter(hw => hw.due_date);
     }
-    console.log("⚠️ API sans devoirs, utilisation des données de secours.");
   } catch (error) {
-    console.log(`⚠️ API Pronote inaccessible: ${error.message}. Données de secours.`);
+    console.log(`⚠️ API de secours inaccessible: ${error.message}.`);
   }
+  // 3. Données de test en dernier recours
+  console.log("⚠️ Utilisation des données de test (aucune source disponible).");
   return CONFIG.pronote.fallbackHomeworks;
 }
 
