@@ -3,8 +3,7 @@
  * Base Devoirs : 3e19fb28-8742-8084-97f0-f3a77dc86f14 (titre: "Subject")
  * Base Séances : 3e19fb28-8742-8013-8fde-d87d8df115c4 (titre: "Nom")
  * Secrets passés par variables d'environnement (GitHub Secrets).
- * Les matières sont envoyées telles quelles : si l'option n'existe pas
- * dans le select "Matière", Notion la crée automatiquement.
+ * Appels Notion via fetch natif (Node 22) : les GET partent sans body.
  */
 
 const axios = require('axios');
@@ -25,8 +24,8 @@ const CONFIG = {
   notion: {
     token: process.env.NOTION_TOKEN,
     databases: {
-      homework: "3e19fb28-8742-8084-97f0-f3a77dc86f14", // base Devoirs (ID base, pas data source)
-      revision: "3e19fb28-8742-8013-8fde-d87d8df115c4"  // base Séances (ID base, pas data source)
+      homework: "3e19fb28-8742-8084-97f0-f3a77dc86f14", // base Devoirs
+      revision: "3e19fb28-8742-8013-8fde-d87d8df115c4"  // base Séances
     }
   },
   scheduling: {
@@ -54,32 +53,27 @@ process.on('unhandledRejection', (error) => {
 });
 
 // ============================================
-// FONCTIONS NOTION
+// FONCTIONS NOTION (fetch natif)
 // ============================================
 async function notionApiCall(method, endpoint, data) {
-  try {
-    const config = {
-      method,
-      url: `https://api.notion.com/v1${endpoint}`,
-      headers: {
-        'Authorization': `Bearer ${CONFIG.notion.token}`,
-        'Notion-Version': '2022-06-28'
-      },
-      timeout: 15000
-    };
-    // Body uniquement si présent : les GET ne doivent PAS avoir de Content-Type/body
-    if (data !== undefined && data !== null) {
-      config.headers['Content-Type'] = 'application/json';
-      config.data = data;
-    }
-    const response = await axios(config);
-    return response.data;
-  } catch (error) {
-    const status = error.response ? error.response.status : null;
-    const body = error.response ? error.response.data : null;
-    console.error(`❌ Erreur Notion sur ${method} ${endpoint} → ${status || 'réseau'}`, body ? JSON.stringify(body).slice(0, 500) : error.message);
-    throw new Error(`Notion ${status || 'réseau'}: ${body && body.message ? body.message : error.message}`);
+  const url = `https://api.notion.com/v1${endpoint}`;
+  const headers = {
+    'Authorization': `Bearer ${CONFIG.notion.token}`,
+    'Notion-Version': '2022-06-28'
+  };
+  let body;
+  // Body uniquement pour POST/PATCH : les GET partent sans aucun body
+  if (data !== undefined && data !== null) {
+    headers['Content-Type'] = 'application/json';
+    body = JSON.stringify(data);
   }
+  const response = await fetch(url, { method, headers, body });
+  const json = await response.json().catch(() => null);
+  if (!response.ok) {
+    console.error(`❌ Erreur Notion sur ${method} ${endpoint} → ${response.status}`, json ? JSON.stringify(json).slice(0, 500) : response.statusText);
+    throw new Error(`Notion ${response.status}: ${json && json.message ? json.message : response.statusText}`);
+  }
+  return json;
 }
 
 // Validation d'accès aux bases avant toute synchronisation
