@@ -4,6 +4,7 @@
  * Base Séances : 3e19fb28-8742-8013-8fde-d87d8df115c4 (titre: "Nom")
  * Secrets passés par variables d'environnement (GitHub Secrets).
  * Appels Notion via fetch natif (Node 22) : les GET partent sans body.
+ * Création de pages : POST /v1/pages avec parent.database_id.
  */
 
 const axios = require('axios');
@@ -55,8 +56,9 @@ process.on('unhandledRejection', (error) => {
 // ============================================
 // FONCTIONS NOTION (fetch natif)
 // ============================================
-async function notionApiCall(method, endpoint, data) {
-  const url = `https://api.notion.com/v1${endpoint}`;
+const NOTION_API_URL = "https://api.notion.com/v1";
+
+async function notionApiCall(method, path, data) {
   const headers = {
     'Authorization': `Bearer ${CONFIG.notion.token}`,
     'Notion-Version': '2022-06-28'
@@ -67,19 +69,27 @@ async function notionApiCall(method, endpoint, data) {
     headers['Content-Type'] = 'application/json';
     body = JSON.stringify(data);
   }
-  const response = await fetch(url, { method, headers, body });
+  const response = await fetch(`${NOTION_API_URL}${path}`, { method, headers, body });
   const json = await response.json().catch(() => null);
   if (!response.ok) {
-    console.error(`❌ Erreur Notion sur ${method} ${endpoint} → ${response.status}`, json ? JSON.stringify(json).slice(0, 500) : response.statusText);
+    console.error(`❌ Erreur Notion sur ${method} ${path} → ${response.status}`, json ? JSON.stringify(json).slice(0, 500) : response.statusText);
     throw new Error(`Notion ${response.status}: ${json && json.message ? json.message : response.statusText}`);
   }
   return json;
 }
 
+// Création de page : POST /v1/pages avec parent.database_id (endpoint correct)
+async function createNotionPage(databaseId, properties) {
+  return notionApiCall('POST', '/pages', {
+    parent: { database_id: databaseId },
+    properties
+  });
+}
+
 // Validation d'accès aux bases avant toute synchronisation
 async function validateNotionDatabases() {
   for (const [label, databaseId] of Object.entries(CONFIG.notion.databases)) {
-    const db = await notionApiCall('GET', `/databases/${databaseId}`);
+    const db = await notionApiCall('GET', `/databases/${encodeURIComponent(databaseId)}`);
     const name = db.title && db.title[0] ? db.title[0].plain_text : databaseId;
     console.log(`✅ Base Notion "${label}" accessible : ${name}`);
   }
@@ -274,7 +284,7 @@ async function syncWithNotion(homeworks, schedule) {
         console.log(`🔄 Devoir mis à jour: ${hw.subject}`);
         results.updated++;
       } else {
-        const created = await notionApiCall('POST', `/databases/${databases.homework}/pages`, { parent: { database_id: databases.homework }, properties: props });
+        const created = await createNotionPage(databases.homework, props);
         homeworkPageIds.set(hw.id, created.id);
         console.log(`✅ Devoir créé: ${hw.subject}`);
         results.created++;
@@ -324,7 +334,7 @@ async function syncWithNotion(homeworks, schedule) {
           console.log(`🔒 Séance verrouillée: ${session.subject} (non modifiée)`);
         }
       } else {
-        await notionApiCall('POST', `/databases/${databases.revision}/pages`, { parent: { database_id: databases.revision }, properties: props });
+        await createNotionPage(databases.revision, props);
         console.log(`✅ Séance créée: ${session.subject} (${session.date} ${session.startTime})`);
         results.created++;
       }
