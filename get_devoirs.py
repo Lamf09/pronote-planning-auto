@@ -1,56 +1,53 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from datetime import date, timedelta
-from urllib.parse import urlparse
-import pronotepy
-import json
+# Récupère les devoirs depuis le flux iCal Pronote (aucune connexion requise)
 import os
 import sys
+import json
+import re
+import requests
+from icalendar import Calendar
+from datetime import date, timedelta
 
-PRONOTE_URL = os.getenv("PRONOTE_URL", "").strip()
-USERNAME = os.getenv("PRONOTE_USERNAME")
-PASSWORD = os.getenv("PRONOTE_PASSWORD")
+ICAL_URL = os.environ.get("PRONOTE_ICAL_URL", "").strip()
+if not ICAL_URL:
+    sys.exit("❌ PRONOTE_ICAL_URL absent")
 
-# --- Validation de l'URL avant tout ---
-if not PRONOTE_URL:
-    sys.exit("❌ PRONOTE_URL absent")
-parsed = urlparse(PRONOTE_URL)
-if parsed.scheme not in ("http", "https") or not parsed.netloc:
-    sys.exit("❌ PRONOTE_URL doit être une URL http(s) complète")
-if "index-education.net" not in parsed.netloc and "pronote" not in parsed.netloc:
-    print(f"⚠️ Attention: l'hôte '{parsed.netloc}' ne semble pas être un serveur Pronote direct.")
-print(f"🔗 Connexion à : {parsed.netloc}{parsed.path}", file=sys.stderr)
-print(f"📦 pronotepy version : {pronotepy.__version__ if hasattr(pronotepy, '__version__') else 'inconnue'}", file=sys.stderr)
+resp = requests.get(ICAL_URL, timeout=30, headers={"User-Agent": "Mozilla/5.0"})
+resp.raise_for_status()
 
-pronotepy.pronoteAPI.HEADERS["User-Agent"] = "Mozilla/5.0"
+cal = Calendar.from_ical(resp.text)
 
-try:
-    client = pronotepy.Client(PRONOTE_URL, username=USERNAME, password=PASSWORD)
-    if not client.logged_in:
-        print(json.dumps([]))
-        sys.exit(1)
+today = date.today()
+horizon = today + timedelta(days=15)
 
-    today = date.today()
-    end = today + timedelta(days=15)
+def strip_html(text):
+    text = re.sub(r"<br\s*/?>", " ", text or "")
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"&nbsp;", " ", text)
+    text = re.sub(r"&amp;", "&", text)
+    text = re.sub(r"&lt;", "<", text)
+    text = re.sub(r"&gt;", ">", text)
+    return re.sub(r"\s+", " ", text).strip()
 
-    homeworks = []
-    for item in client.homework(today, end):
-        homeworks.append({
-            "id": f"pronote_{item.id}",
-            "subject": item.subject.name,
-            "description": (item.description or "").replace("\n", " ").strip(),
-            "due_date": str(item.date),
-            "difficulty": "⭐⭐",
-            "type": "exercice"
-        })
-    print(json.dumps(homeworks, ensure_ascii=False))
-    print(f"📚 {len(homeworks)} devoirs récupérés.", file=sys.stderr)
+homeworks = []
+for comp in cal.walk("VEVENT"):
+    summary = strip_html(comp.get("SUMMARY"))
+    description = strip_html(comp.get("DESCRIPTION"))
+    dt = comp.get("DTSTART") or comp.get("DTEND")
+    if not dt:
+        continue
+    d = dt.dt.date() if hasattr(dt.dt, "date") else dt.dt
+    if d < today or d > horizon:
+        continue
+    homeworks.append({
+        "id": f"pronote_{d.isoformat()}_{re.sub(r'[^a-zA-Z0-9]', '', summary)[:20]}",
+        "subject": summary,
+        "description": description,
+        "due_date": d.isoformat(),
+        "difficulty": "⭐⭐",
+        "type": "exercice"
+    })
 
-except pronotepy.exceptions.PronoteAPIError as e:
-    print(f"❌ Erreur pronotepy : {e}", file=sys.stderr)
-    print(json.dumps([]))
-    sys.exit(1)
-except Exception as e:
-    print(f"❌ Erreur inattendue : {type(e).__name__}: {e}", file=sys.stderr)
-    print(json.dumps([]))
-    sys.exit(1)
+print(json.dumps(homeworks, ensure_ascii=False))
+print(f"📚 {len(homeworks)} devoirs récupérés depuis l'iCal Pronote.", file=sys.stderr)
