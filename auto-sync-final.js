@@ -56,18 +56,23 @@ process.on('unhandledRejection', (error) => {
 // ============================================
 // FONCTIONS NOTION
 // ============================================
-async function notionApiCall(method, endpoint, data = null) {
+async function notionApiCall(method, endpoint, data) {
   try {
-    const response = await axios({
+    const config = {
       method,
       url: `https://api.notion.com/v1${endpoint}`,
       headers: {
         'Authorization': `Bearer ${CONFIG.notion.token}`,
-        'Notion-Version': '2022-06-28',
-        'Content-Type': 'application/json'
+        'Notion-Version': '2022-06-28'
       },
-      data
-    });
+      timeout: 15000
+    };
+    // Body uniquement si présent : les GET ne doivent PAS avoir de Content-Type/body
+    if (data !== undefined && data !== null) {
+      config.headers['Content-Type'] = 'application/json';
+      config.data = data;
+    }
+    const response = await axios(config);
     return response.data;
   } catch (error) {
     const status = error.response ? error.response.status : null;
