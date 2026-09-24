@@ -18,6 +18,8 @@ const CONFIG = {
     username: process.env.PRONOTE_USERNAME,
     password: process.env.PRONOTE_PASSWORD
   },
+  // ... (notion, scheduling inchangés)
+};,
   notion: {
     token: process.env.NOTION_TOKEN,
     databases: {
