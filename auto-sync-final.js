@@ -1,5 +1,6 @@
 /**
  * Synchronisation Pronote -> Notion
+ * Récupération des devoirs : Pawnote (compatible Pronote 2026)
  * Base Devoirs : 3e19fb28-8742-8084-97f0-f3a77dc86f14 (titre: "Subject")
  * Base Séances : 3e19fb28-8742-8013-8fde-d87d8df115c4 (titre: "Nom")
  * Séances = plages d'événements (Date avec début+fin), sans chevauchement.
@@ -13,12 +14,9 @@ const crypto = require('crypto');
 // ============================================
 const CONFIG = {
   pronote: {
-    apiUrl: "https://pronote-api-tz5f.onrender.com/devoirs",
-    fallbackHomeworks: [
-      { id: "hw_maths_controle", subject: "Math", description: "Contrôle sur les équations différentielles", due_date: "2026-09-25", difficulty: "⭐⭐⭐", type: "contrôle" },
-      { id: "hw_francais_dissertation", subject: "Français", description: "Dissertation sur le roman du XIXe siècle", due_date: "2026-09-28", difficulty: "⭐⭐", type: "exercice" },
-      { id: "hw_svt_tp", subject: "SVT", description: "TP sur la photosynthèse", due_date: "2026-09-22", difficulty: "⭐", type: "exercice" }
-    ]
+    url: process.env.PRONOTE_URL || "https://0560101f.index-education.net/pronote/eleve.html",
+    username: process.env.PRONOTE_USERNAME,
+    password: process.env.PRONOTE_PASSWORD
   },
   notion: {
     token: process.env.NOTION_TOKEN,
@@ -75,10 +73,7 @@ async function notionApiCall(method, path, data) {
 }
 
 async function createNotionPage(databaseId, properties) {
-  return notionApiCall('POST', '/pages', {
-    parent: { database_id: databaseId },
-    properties
-  });
+  return notionApiCall('POST', '/pages', { parent: { database_id: databaseId }, properties });
 }
 
 async function validateNotionDatabases() {
@@ -98,7 +93,6 @@ async function getSchema(databaseId, label) {
   return db.properties;
 }
 
-// Construit le payload d'une propriété selon son type réel dans Notion
 function buildProp(schema, name, value) {
   const prop = schema[name];
   if (!prop) { console.log(`   ⚠️ Propriété "${name}" absente de la base (ignorée).`); return undefined; }
@@ -116,7 +110,6 @@ function buildProp(schema, name, value) {
   }
   if (type === 'checkbox') return { checkbox: Boolean(value) };
   if (type === 'number') return { number: Number(value) };
-  // date : accepte une chaîne OU un objet { start, end } -> plage d'événement
   if (type === 'date') {
     if (value && typeof value === 'object' && value.start) {
       return { date: { start: String(value.start), end: value.end ? String(value.end) : undefined } };
@@ -147,51 +140,53 @@ async function findPageByProperty(databaseId, schema, propertyName, value) {
 }
 
 // ============================================
-// 1. RÉCUPÉRER LES DEVOIRS
+// 1. RÉCUPÉRER LES DEVOIRS (Pawnote)
 // ============================================
 async function fetchHomeworks() {
-  console.log("📚 Récupération des devoirs depuis Pronote...");
+  console.log("📚 Récupération des devoirs depuis Pronote (Pawnote)...");
   try {
-    const fs = require('fs');
-    if (fs.existsSync('devoirs.json')) {
-      const list = JSON.parse(fs.readFileSync('devoirs.json', 'utf8'));
-      if (Array.isArray(list) && list.length) {
-        console.log(`✅ ${list.length} devoirs récupérés depuis Pronote (get_devoirs.py).`);
-        return list.map(hw => ({
-          id: hw.id || `hw_${crypto.randomBytes(4).toString('hex')}`,
-          subject: hw.subject || "Sans matière",
-          description: hw.description || "",
-          due_date: (hw.due_date || "").slice(0, 10),
-          difficulty: hw.difficulty || "⭐⭐",
-          type: hw.type || "exercice"
-        })).filter(hw => hw.due_date);
-      }
-      console.log("⚠️ Aucun devoir dans devoirs.json.");
+    const { Pronote } = await import('pawnote');
+
+    const session = await Pronote.startSessionWithCredentials({
+      url: CONFIG.pronote.url,
+      username: CONFIG.pronote.username,
+      password: CONFIG.pronote.password
+    });
+    console.log("✅ Connecté à Pronote.");
+
+    // Devoirs des 3 prochaines semaines (méthode selon version de Pawnote)
+    let items = [];
+    if (typeof session.getHomeworkForWeeks === 'function') {
+      items = await session.getHomeworkForWeeks(0, 3);
+    } else if (typeof session.getHomework === 'function') {
+      items = await session.getHomework();
     } else {
-      console.log("⚠️ Fichier devoirs.json absent.");
+      throw new Error("Méthode devoirs introuvable dans Pawnote (version " + (session.constructor.name || '?') + ").");
     }
+
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const horizon = new Date(today); horizon.setDate(horizon.getDate() + 15);
+
+    const homeworks = items
+      .filter(hw => hw.dueDate && new Date(hw.dueDate) >= today && new Date(hw.dueDate) <= horizon)
+      .map(hw => ({
+        id: `pronote_${hw.id || crypto.randomBytes(4).toString('hex')}`,
+        subject: (hw.subject && hw.subject.name) || "Sans matière",
+        description: (hw.description || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim(),
+        due_date: new Date(hw.dueDate).toISOString().split('T')[0],
+        difficulty: "⭐⭐",
+        type: "exercice"
+      }));
+
+    console.log(`✅ ${homeworks.length} devoirs récupérés depuis Pronote.`);
+    session.close?.();
+    if (homeworks.length) return homeworks;
+    console.log("⚠️ Aucun devoir sur Pronote dans les 15 prochains jours.");
+    return [];
   } catch (error) {
-    console.log(`⚠️ Erreur lecture devoirs.json: ${error.message}`);
+    console.error(`❌ Erreur Pawnote : ${error.message}`);
+    throw error; // on veut voir l'erreur clairement dans les logs
   }
-  try {
-    const response = await axios.get(CONFIG.pronote.apiUrl, { timeout: 15000 });
-    const list = Array.isArray(response.data) ? response.data : response.data.homeworks || [];
-    if (list.length) {
-      console.log(`✅ ${list.length} devoirs récupérés depuis l'API de secours.`);
-      return list.map(hw => ({
-        id: hw.id || `hw_${crypto.randomBytes(4).toString('hex')}`,
-        subject: hw.subject || "Sans matière",
-        description: hw.description || "",
-        due_date: (hw.due_date || "").slice(0, 10),
-        difficulty: hw.difficulty || "⭐⭐",
-        type: hw.type || "exercice"
-      })).filter(hw => hw.due_date);
-    }
-  } catch (error) {
-    console.log(`⚠️ API de secours inaccessible: ${error.message}.`);
-  }
-  console.log("⚠️ Utilisation des données de test.");
-  return CONFIG.pronote.fallbackHomeworks;
 }
 
 // ============================================
@@ -219,7 +214,6 @@ function toHHMM(minutes) { return `${String(Math.floor(minutes / 60)).padStart(2
 
 function generatePlanning(homeworks) {
   const schedule = [];
-  // Créneaux réservés par jour : liste de [début, fin] en minutes
   const booked = new Map();
   const usedMinutes = new Map();
   const today = new Date();
@@ -228,7 +222,7 @@ function generatePlanning(homeworks) {
 
   function overlaps(dateKey, start, end) {
     for (const [s, e] of (booked.get(dateKey) || [])) {
-      if (start < e && s < end) return true; // chevauchement
+      if (start < e && s < end) return true;
     }
     return false;
   }
@@ -239,7 +233,6 @@ function generatePlanning(homeworks) {
     for (let i = 0; i < hw.sessionCount; i++) {
       let placed = false;
       const maxBack = Math.min(daysUntilDue, 14);
-      // On essaie d'abord les jours les plus proches de la date limite, sinon on remonte
       for (let offset = 1; offset <= maxBack && !placed; offset++) {
         const sessionDate = new Date(dueDate);
         sessionDate.setDate(sessionDate.getDate() - offset);
@@ -250,11 +243,9 @@ function generatePlanning(homeworks) {
         const availability = CONFIG.scheduling.defaultAvailability[dayName] || ["09:00", "17:00"];
         const winStart = toMinutes(availability[0]);
         const winEnd = toMinutes(availability[1]);
-        // Recherche d'un créneau libre par pas de 15 min, sans chevauchement
         for (let start = winStart; start + hw.sessionDuration <= winEnd && !placed; start += 15) {
           const end = start + hw.sessionDuration;
           if (overlaps(dateKey, start, end)) continue;
-          // Réserver le créneau
           if (!booked.has(dateKey)) booked.set(dateKey, []);
           booked.get(dateKey).push([start, end]);
           usedMinutes.set(dateKey, (usedMinutes.get(dateKey) || 0) + hw.sessionDuration);
@@ -337,7 +328,6 @@ async function syncWithNotion(homeworks, schedule) {
       const relatedId = homeworkPageIds.get(session.homeworkId);
       const relation = (relationProp && relatedId) ? buildProp(revSchema, "Devoirs", relatedId) : undefined;
 
-      // PLAGE D'ÉVÉNEMENT : Date avec début ET fin -> bloc lisible dans le calendrier
       const dateRange = {
         start: `${session.date}T${session.startTime}:00`,
         end: `${session.date}T${session.endTime}:00`
