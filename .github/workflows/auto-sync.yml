@@ -19,7 +19,11 @@ jobs:
           node-version: '22'
 
       - name: Install dependencies
-        run: npm install axios pawnote
+        run: npm install
+
+      - name: Diagnostic Pawnote (liste les exports réels)
+        run: |
+          node -e "import('pawnote').then(m => { const k = Object.keys(m); console.log('EXPORTS PAWNOTE:', JSON.stringify(k)); const d = m.default ? Object.keys(m.default) : []; console.log('DEFAULT:', JSON.stringify(d)); }).catch(e => { console.error('IMPORT FAIL:', e.message); process.exit(1); })"
 
       - name: Run sync
         run: node auto-sync-final.js
