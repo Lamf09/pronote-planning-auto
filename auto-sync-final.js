@@ -14,7 +14,7 @@ const crypto = require('crypto');
 // ============================================
 const CONFIG = {
   pronote: {
-    url: process.env.PRONOTE_URL || "https://0560101f.index-education.net/pronote/eleve.html",
+    url: process.env.PRONOTE_URL || "https://0560101f.index-education.net/pronote/",
     username: process.env.PRONOTE_USERNAME,
     password: process.env.PRONOTE_PASSWORD
   },
@@ -147,17 +147,39 @@ async function findPageByProperty(databaseId, schema, propertyName, value) {
 // 1. RÉCUPÉRER LES DEVOIRS (Pawnote — API officielle)
 // ============================================
 function normalizePronoteUrl(rawUrl) {
-  const parsed = new URL(String(rawUrl).trim());
+  let parsed;
+  try {
+    parsed = new URL(String(rawUrl).trim());
+  } catch {
+    throw new Error(`❌ PRONOTE_URL invalide : ${rawUrl}`);
+  }
   if (!/^https?:$/.test(parsed.protocol)) {
-    throw new Error(`PRONOTE_URL invalide : ${rawUrl}`);
+    throw new Error(`❌ PRONOTE_URL doit utiliser http(s) : ${rawUrl}`);
   }
   // Pawnote attend la racine de l'installation Pronote, pas la page de login
   parsed.pathname = parsed.pathname
     .replace(/\/(?:eleve|parent|prof|mobile\.eleve)\.html?\/?$/i, '/')
-    .replace(/\/+$/, '/') || '/';
+    .replace(/\/+$/, '/');
   parsed.search = '';
   parsed.hash = '';
+  if (!/\/pronote\/$/i.test(parsed.pathname)) {
+    throw new Error(
+      `❌ PRONOTE_URL doit pointer vers la racine Pronote, ex : https://etablissement.index-education.net/pronote/`
+    );
+  }
   return parsed.toString();
+}
+
+async function checkPronoteUrl(url) {
+  // Test HTTP avant connexion : distingue une URL invalide d'un problème d'identifiants
+  const response = await fetch(url, { method: 'GET', redirect: 'manual' });
+  if (response.status >= 300 && response.status < 400) {
+    console.log(`↪️ Pronote redirige vers : ${response.headers.get('location')}`);
+  }
+  if (response.status === 404) {
+    throw new Error(`❌ URL Pronote introuvable (404) : ${url}`);
+  }
+  console.log(`🌐 URL Pronote accessible : HTTP ${response.status}`);
 }
 
 async function fetchHomeworks() {
@@ -165,9 +187,10 @@ async function fetchHomeworks() {
   const pronote = await import('pawnote');
 
   const url = normalizePronoteUrl(CONFIG.pronote.url);
+  await checkPronoteUrl(url);
+
   const username = String(CONFIG.pronote.username || '').trim();
   const password = String(CONFIG.pronote.password || '');
-
   if (!username) throw new Error("❌ PRONOTE_USERNAME vide.");
   if (!password) throw new Error("❌ PRONOTE_PASSWORD vide.");
 
@@ -175,7 +198,6 @@ async function fetchHomeworks() {
   console.log(`👤 Utilisateur : ${username}`);
 
   const session = pronote.createSessionHandle();
-
   let connected = false;
   try {
     await pronote.loginCredentials(session, {
