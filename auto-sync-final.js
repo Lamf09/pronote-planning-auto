@@ -146,22 +146,32 @@ async function findPageByProperty(databaseId, schema, propertyName, value) {
 // ============================================
 // 1. RÉCUPÉRER LES DEVOIRS (Pawnote — API officielle)
 // ============================================
+function normalizePronoteUrl(rawUrl) {
+  const parsed = new URL(String(rawUrl).trim());
+  if (!/^https?:$/.test(parsed.protocol)) {
+    throw new Error(`PRONOTE_URL invalide : ${rawUrl}`);
+  }
+  // Pawnote attend la racine de l'installation Pronote, pas la page de login
+  parsed.pathname = parsed.pathname
+    .replace(/\/(?:eleve|parent|prof|mobile\.eleve)\.html?\/?$/i, '/')
+    .replace(/\/+$/, '/') || '/';
+  parsed.search = '';
+  parsed.hash = '';
+  return parsed.toString();
+}
+
 async function fetchHomeworks() {
   console.log("📚 Récupération des devoirs depuis Pronote (Pawnote)...");
   const pronote = await import('pawnote');
 
-  const url = String(CONFIG.pronote.url || '').trim();
+  const url = normalizePronoteUrl(CONFIG.pronote.url);
   const username = String(CONFIG.pronote.username || '').trim();
   const password = String(CONFIG.pronote.password || '');
 
-  // Validations préalables explicites
-  if (!/^https?:\/\//i.test(url)) {
-    throw new Error(`❌ PRONOTE_URL invalide : "${url}"`);
-  }
   if (!username) throw new Error("❌ PRONOTE_USERNAME vide.");
   if (!password) throw new Error("❌ PRONOTE_PASSWORD vide.");
 
-  console.log(`🔗 URL Pronote : ${url}`);
+  console.log(`🔗 URL Pronote normalisée : ${url}`);
   console.log(`👤 Utilisateur : ${username}`);
 
   const session = pronote.createSessionHandle();
