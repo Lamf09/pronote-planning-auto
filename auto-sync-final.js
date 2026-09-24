@@ -156,15 +156,18 @@ function normalizePronoteUrl(rawUrl) {
   if (!/^https?:$/.test(parsed.protocol)) {
     throw new Error(`❌ PRONOTE_URL doit utiliser http(s) : ${rawUrl}`);
   }
-  // Pawnote attend la racine de l'installation Pronote, pas la page de login
-  parsed.pathname = parsed.pathname
-    .replace(/\/(?:eleve|parent|prof|mobile\.eleve)\.html?\/?$/i, '/')
-    .replace(/\/+$/, '/');
+  // Pawnote attend la page élève DIRECTE (eleve.html), pas la racine /pronote/
+  // (la racine est la page d'accueil listant les espaces -> "The requested page does not exist")
+  let path = parsed.pathname
+    .replace(/\/(?:parent|prof|mobile\.eleve)\.html?\/?$/i, '/eleve.html')
+    .replace(/\/+$/, '/eleve.html');
+  if (!/\.html?$/i.test(path)) path = path.replace(/\/$/, '') + '/eleve.html';
+  parsed.pathname = path;
   parsed.search = '';
   parsed.hash = '';
-  if (!/\/pronote\/$/i.test(parsed.pathname)) {
+  if (!/\/pronote\/eleve\.html?$/i.test(parsed.pathname)) {
     throw new Error(
-      `❌ PRONOTE_URL doit pointer vers la racine Pronote, ex : https://etablissement.index-education.net/pronote/`
+      `❌ PRONOTE_URL doit pointer vers l'installation Pronote, ex : https://etablissement.index-education.net/pronote/eleve.html`
     );
   }
   return parsed.toString();
