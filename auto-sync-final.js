@@ -140,55 +140,79 @@ async function findPageByProperty(databaseId, schema, propertyName, value) {
 }
 
 // ============================================
-// 1. RÉCUPÉRER LES DEVOIRS (Pawnote)
+// 1. RÉCUPÉRER LES DEVOIRS (Pawnote, API auto-détectée)
 // ============================================
 async function fetchHomeworks() {
   console.log("📚 Récupération des devoirs depuis Pronote (Pawnote)...");
-  try {
-    const { Pronote } = await import('pawnote');
+  const pawnote = await import('pawnote');
 
-    const session = await Pronote.startSessionWithCredentials({
-      url: CONFIG.pronote.url,
-      username: CONFIG.pronote.username,
-      password: CONFIG.pronote.password
-    });
-    console.log("✅ Connecté à Pronote.");
+  // Auto-détection de l'API : Pawnote peut exporter la classe directement, dans default, ou en fonction libre
+  const candidates = [
+    pawnote.Pronote,
+    pawnote.default && pawnote.default.Pronote,
+    pawnote.Session,
+    pawnote.default && pawnote.default.Session,
+    pawnote.PronoteAPI,
+    pawnote.startSessionWithCredentials,
+    pawnote.startSession,
+    pawnote.createSession,
+    pawnote.login
+  ].filter(Boolean);
 
-    // Devoirs des 3 prochaines semaines (méthode selon version de Pawnote)
-    let items = [];
-    if (typeof session.getHomeworkForWeeks === 'function') {
-      items = await session.getHomeworkForWeeks(0, 3);
-    } else if (typeof session.getHomework === 'function') {
-      items = await session.getHomework();
-    } else {
-      throw new Error("Méthode devoirs introuvable dans Pawnote (version " + (session.constructor.name || '?') + ").");
-    }
-
-    const today = new Date(); today.setHours(0, 0, 0, 0);
-    const horizon = new Date(today); horizon.setDate(horizon.getDate() + 15);
-
-    const homeworks = items
-      .filter(hw => hw.dueDate && new Date(hw.dueDate) >= today && new Date(hw.dueDate) <= horizon)
-      .map(hw => ({
-        id: `pronote_${hw.id || crypto.randomBytes(4).toString('hex')}`,
-        subject: (hw.subject && hw.subject.name) || "Sans matière",
-        description: (hw.description || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim(),
-        due_date: new Date(hw.dueDate).toISOString().split('T')[0],
-        difficulty: "⭐⭐",
-        type: "exercice"
-      }));
-
-    console.log(`✅ ${homeworks.length} devoirs récupérés depuis Pronote.`);
-    session.close?.();
-    if (homeworks.length) return homeworks;
-    console.log("⚠️ Aucun devoir sur Pronote dans les 15 prochains jours.");
-    return [];
-  } catch (error) {
-    console.error(`❌ Erreur Pawnote : ${error.message}`);
-    throw error; // on veut voir l'erreur clairement dans les logs
+  if (candidates.length === 0) {
+    throw new Error(
+      `API Pawnote non reconnue. Exports disponibles : ${Object.keys(pawnote).slice(0, 30).join(', ')}`
+    );
   }
-}
 
+  const api = candidates[0];
+  const session = await (
+    api.startSessionWithCredentials
+      ? api.startSessionWithCredentials({ url: CONFIG.pronote.url, username: CONFIG.pronote.username, password: CONFIG.pronote.password })
+      : typeof api === 'function'
+        ? api({ url: CONFIG.pronote.url, username: CONFIG.pronote.username, password: CONFIG.pronote.password })
+        : (() => { throw new Error(`Candidat API trouvé mais non appelable. Clés: ${Object.keys(api).slice(0, 30).join(', ')}`); })()
+  );
+  console.log("✅ Connecté à Pronote.");
+
+  // Devoirs : on teste toutes les méthodes connues
+  const methods = ['getHomeworkForWeeks', 'getHomework', 'getHomeworks', 'readHomework', 'homework'];
+  let items = null;
+  for (const name of methods) {
+    if (typeof session[name] === 'function') {
+      try {
+        items = name === 'getHomeworkForWeeks'
+          ? await session.getHomeworkForWeeks(0, 3)
+          : await sessionname;
+        console.log(`🔎 Méthode utilisée : ${name}()`);
+        break;
+      } catch (e) {
+        console.log(`⚠️ ${name}() a échoué: ${e.message}`);
+      }
+    }
+  }
+  if (!items) {
+    throw new Error(`Méthode devoirs introuvable. Méthodes session: ${Object.getOwnPropertyNames(Object.getPrototypeOf(session)).join(', ')}`);
+  }
+
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const horizon = new Date(today); horizon.setDate(horizon.getDate() + 15);
+
+  const homeworks = items
+    .filter(hw => hw.dueDate && new Date(hw.dueDate) >= today && new Date(hw.dueDate) <= horizon)
+    .map(hw => ({
+      id: `pronote_${hw.id || crypto.randomBytes(4).toString('hex')}`,
+      subject: (hw.subject && hw.subject.name) || "Sans matière",
+      description: (hw.description || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim(),
+      due_date: new Date(hw.dueDate).toISOString().split('T')[0],
+      difficulty: "⭐⭐",
+      type: "exercice"
+    }));
+
+  console.log(`✅ ${homeworks.length} devoirs récupérés depuis Pronote.`);
+  if (session.close) session.close();
+  return homeworks;
+}
 // ============================================
 // 2. ANALYSER LES DEVOIRS
 // ============================================
