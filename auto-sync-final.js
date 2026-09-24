@@ -150,38 +150,66 @@ async function fetchHomeworks() {
   console.log("📚 Récupération des devoirs depuis Pronote (Pawnote)...");
   const pronote = await import('pawnote');
 
+  const url = String(CONFIG.pronote.url || '').trim();
+  const username = String(CONFIG.pronote.username || '').trim();
+  const password = String(CONFIG.pronote.password || '');
+
+  // Validations préalables explicites
+  if (!/^https?:\/\//i.test(url)) {
+    throw new Error(`❌ PRONOTE_URL invalide : "${url}"`);
+  }
+  if (!username) throw new Error("❌ PRONOTE_USERNAME vide.");
+  if (!password) throw new Error("❌ PRONOTE_PASSWORD vide.");
+
+  console.log(`🔗 URL Pronote : ${url}`);
+  console.log(`👤 Utilisateur : ${username}`);
+
   const session = pronote.createSessionHandle();
-  await pronote.loginCredentials(session, {
-    url: CONFIG.pronote.url,
-    username: CONFIG.pronote.username,
-    password: CONFIG.pronote.password,
-    deviceUUID: "pronote-planning-auto-9f2b",
-    kind: pronote.AccountKind.STUDENT
-  });
-  console.log("✅ Connecté à Pronote.");
 
-  const items = await pronote.assignmentsFromWeek(session, 0, 3);
-  console.log(`🔎 ${items.length} devoirs trouvés (semaines 0 à 3).`);
+  let connected = false;
+  try {
+    await pronote.loginCredentials(session, {
+      url,
+      username,
+      password,
+      deviceUUID: "pronote-planning-auto-9f2b",
+      kind: pronote.AccountKind.STUDENT
+    });
+    connected = true;
+    console.log("✅ Connecté à Pronote.");
+  } catch (error) {
+    const message = error && error.message ? error.message : String(error);
+    const name = error && error.constructor ? error.constructor.name : 'Erreur';
+    console.error("❌ Échec de connexion à Pronote.");
+    console.error(`   Type d'erreur : ${name}`);
+    console.error(`   Détail : ${message}`);
+    throw new Error(`Connexion Pronote impossible [${name}]: ${message}`);
+  }
 
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-  const horizon = new Date(today); horizon.setDate(horizon.getDate() + 21);
+  try {
+    const items = await pronote.assignmentsFromWeek(session, 0, 3);
+    console.log(`🔎 ${items.length} devoirs trouvés (semaines 0 à 3).`);
 
-  const difficultyMap = { 1: "⭐", 2: "⭐⭐", 3: "⭐⭐⭐" };
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const horizon = new Date(today); horizon.setDate(horizon.getDate() + 21);
+    const difficultyMap = { 1: "⭐", 2: "⭐⭐", 3: "⭐⭐⭐" };
 
-  const homeworks = items
-    .filter(hw => hw.deadline && new Date(hw.deadline) >= today && new Date(hw.deadline) <= horizon)
-    .map(hw => ({
-      id: `pronote_${hw.id}`,
-      subject: (hw.subject && hw.subject.name) || "Sans matière",
-      description: (hw.description || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim(),
-      due_date: new Date(hw.deadline).toISOString().split('T')[0],
-      difficulty: difficultyMap[hw.difficulty] || "⭐⭐",
-      type: "exercice"
-    }));
+    const homeworks = items
+      .filter(hw => hw.deadline && new Date(hw.deadline) >= today && new Date(hw.deadline) <= horizon)
+      .map(hw => ({
+        id: `pronote_${hw.id}`,
+        subject: (hw.subject && hw.subject.name) || "Sans matière",
+        description: (hw.description || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim(),
+        due_date: new Date(hw.deadline).toISOString().split('T')[0],
+        difficulty: difficultyMap[hw.difficulty] || "⭐⭐",
+        type: "exercice"
+      }));
 
-  console.log(`✅ ${homeworks.length} devoirs récupérés.`);
-  pronote.logout?.(session);
-  return homeworks;
+    console.log(`✅ ${homeworks.length} devoirs récupérés.`);
+    return homeworks;
+  } finally {
+    if (connected) pronote.logout?.(session);
+  }
 }
 
 // ============================================
