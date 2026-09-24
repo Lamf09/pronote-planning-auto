@@ -140,77 +140,46 @@ async function findPageByProperty(databaseId, schema, propertyName, value) {
 }
 
 // ============================================
-// 1. RÉCUPÉRER LES DEVOIRS (Pawnote, API auto-détectée)
+// 1. RÉCUPÉRER LES DEVOIRS (Pawnote — API officielle 1.6.2)
 // ============================================
 async function fetchHomeworks() {
   console.log("📚 Récupération des devoirs depuis Pronote (Pawnote)...");
-  const pawnote = await import('pawnote');
+  const pronote = await import('pawnote');
 
-  // Auto-détection de l'API : Pawnote peut exporter la classe directement, dans default, ou en fonction libre
-  const candidates = [
-    pawnote.Pronote,
-    pawnote.default && pawnote.default.Pronote,
-    pawnote.Session,
-    pawnote.default && pawnote.default.Session,
-    pawnote.PronoteAPI,
-    pawnote.startSessionWithCredentials,
-    pawnote.startSession,
-    pawnote.createSession,
-    pawnote.login
-  ].filter(Boolean);
-
-  if (candidates.length === 0) {
-    throw new Error(
-      `API Pawnote non reconnue. Exports disponibles : ${Object.keys(pawnote).slice(0, 30).join(', ')}`
-    );
-  }
-
-  const api = candidates[0];
-  const session = await (
-    api.startSessionWithCredentials
-      ? api.startSessionWithCredentials({ url: CONFIG.pronote.url, username: CONFIG.pronote.username, password: CONFIG.pronote.password })
-      : typeof api === 'function'
-        ? api({ url: CONFIG.pronote.url, username: CONFIG.pronote.username, password: CONFIG.pronote.password })
-        : (() => { throw new Error(`Candidat API trouvé mais non appelable. Clés: ${Object.keys(api).slice(0, 30).join(', ')}`); })()
-  );
+  // API officielle Pawnote 1.6.2 :
+  //   createSessionHandle() puis loginCredentials(session, {...}) puis assignmentsFromWeek(session, from, to)
+  const session = pronote.createSessionHandle();
+  await pronote.loginCredentials(session, {
+    url: CONFIG.pronote.url,
+    username: CONFIG.pronote.username,
+    password: CONFIG.pronote.password,
+    deviceUUID: "pronote-planning-auto-9f2b", // identifiant d'appareil fixe (obligatoire)
+    kind: pronote.AccountKind.STUDENT
+  });
   console.log("✅ Connecté à Pronote.");
 
-  // Devoirs : on teste toutes les méthodes connues
-  const methods = ['getHomeworkForWeeks', 'getHomework', 'getHomeworks', 'readHomework', 'homework'];
-  let items = null;
-  for (const name of methods) {
-    if (typeof session[name] === 'function') {
-      try {
-        items = name === 'getHomeworkForWeeks'
-          ? await session.getHomeworkForWeeks(0, 3)
-          : await sessionname;
-        console.log(`🔎 Méthode utilisée : ${name}()`);
-        break;
-      } catch (e) {
-        console.log(`⚠️ ${name}() a échoué: ${e.message}`);
-      }
-    }
-  }
-  if (!items) {
-    throw new Error(`Méthode devoirs introuvable. Méthodes session: ${Object.getOwnPropertyNames(Object.getPrototypeOf(session)).join(', ')}`);
-  }
+  // Devoirs : de la semaine actuelle (0) jusqu'à 3 semaines après
+  const items = await pronote.assignmentsFromWeek(session, 0, 3);
+  console.log(`🔎 ${items.length} devoirs trouvés (semaines 0 à 3).`);
 
   const today = new Date(); today.setHours(0, 0, 0, 0);
-  const horizon = new Date(today); horizon.setDate(horizon.getDate() + 15);
+  const horizon = new Date(today); horizon.setDate(horizon.getDate() + 21);
+
+  const difficultyMap = { 1: "⭐", 2: "⭐⭐", 3: "⭐⭐⭐" }; // AssignmentDifficulty -> étoiles
 
   const homeworks = items
-    .filter(hw => hw.dueDate && new Date(hw.dueDate) >= today && new Date(hw.dueDate) <= horizon)
+    .filter(hw => hw.deadline && new Date(hw.deadline) >= today && new Date(hw.deadline) <= horizon)
     .map(hw => ({
-      id: `pronote_${hw.id || crypto.randomBytes(4).toString('hex')}`,
+      id: `pronote_${hw.id}`,
       subject: (hw.subject && hw.subject.name) || "Sans matière",
       description: (hw.description || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim(),
-      due_date: new Date(hw.dueDate).toISOString().split('T')[0],
-      difficulty: "⭐⭐",
+      due_date: new Date(hw.deadline).toISOString().split('T')[0],
+      difficulty: difficultyMap[hw.difficulty] || "⭐⭐",
       type: "exercice"
     }));
 
-  console.log(`✅ ${homeworks.length} devoirs récupérés depuis Pronote.`);
-  if (session.close) session.close();
+  console.log(`✅ ${homeworks.length} devoirs récupérés (15-21 prochains jours).`);
+  pronote.logout?.(session);
   return homeworks;
 }
 // ============================================
