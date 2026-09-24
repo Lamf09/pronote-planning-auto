@@ -21,6 +21,23 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      - name: Validate configuration
+        shell: bash
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          PRONOTE_URL: ${{ secrets.PRONOTE_URL }}
+          PRONOTE_USERNAME: ${{ secrets.PRONOTE_USERNAME }}
+          PRONOTE_PASSWORD: ${{ secrets.PRONOTE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for variable in NOTION_TOKEN PRONOTE_URL PRONOTE_USERNAME PRONOTE_PASSWORD; do
+            if [[ -z "${!variable:-}" ]]; then
+              echo "::error::Secret manquant : ${variable}"
+              exit 1
+            fi
+          done
+          echo "✅ Les 4 secrets sont présents."
+
       - name: Run sync
         run: node auto-sync-final.js
         env:
