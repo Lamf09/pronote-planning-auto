@@ -18,8 +18,6 @@ const CONFIG = {
     username: process.env.PRONOTE_USERNAME,
     password: process.env.PRONOTE_PASSWORD
   },
-  // ... (notion, scheduling inchangés)
-};,
   notion: {
     token: process.env.NOTION_TOKEN,
     databases: {
@@ -40,9 +38,13 @@ const CONFIG = {
   }
 };
 
-if (!process.env.NOTION_TOKEN) {
-  console.error("❌ ERREUR: Variable d'environnement NOTION_TOKEN manquante.");
-  process.exit(1);
+// Validation des variables d'environnement requises
+const requiredEnv = ["NOTION_TOKEN", "PRONOTE_URL", "PRONOTE_USERNAME", "PRONOTE_PASSWORD"];
+for (const name of requiredEnv) {
+  if (!process.env[name]) {
+    console.error(`❌ Variable d'environnement manquante : ${name}`);
+    process.exit(1);
+  }
 }
 
 process.on('unhandledRejection', (error) => {
@@ -142,32 +144,29 @@ async function findPageByProperty(databaseId, schema, propertyName, value) {
 }
 
 // ============================================
-// 1. RÉCUPÉRER LES DEVOIRS (Pawnote — API officielle 1.6.2)
+// 1. RÉCUPÉRER LES DEVOIRS (Pawnote — API officielle)
 // ============================================
 async function fetchHomeworks() {
   console.log("📚 Récupération des devoirs depuis Pronote (Pawnote)...");
   const pronote = await import('pawnote');
 
-  // API officielle Pawnote 1.6.2 :
-  //   createSessionHandle() puis loginCredentials(session, {...}) puis assignmentsFromWeek(session, from, to)
   const session = pronote.createSessionHandle();
   await pronote.loginCredentials(session, {
     url: CONFIG.pronote.url,
     username: CONFIG.pronote.username,
     password: CONFIG.pronote.password,
-    deviceUUID: "pronote-planning-auto-9f2b", // identifiant d'appareil fixe (obligatoire)
+    deviceUUID: "pronote-planning-auto-9f2b",
     kind: pronote.AccountKind.STUDENT
   });
   console.log("✅ Connecté à Pronote.");
 
-  // Devoirs : de la semaine actuelle (0) jusqu'à 3 semaines après
   const items = await pronote.assignmentsFromWeek(session, 0, 3);
   console.log(`🔎 ${items.length} devoirs trouvés (semaines 0 à 3).`);
 
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const horizon = new Date(today); horizon.setDate(horizon.getDate() + 21);
 
-  const difficultyMap = { 1: "⭐", 2: "⭐⭐", 3: "⭐⭐⭐" }; // AssignmentDifficulty -> étoiles
+  const difficultyMap = { 1: "⭐", 2: "⭐⭐", 3: "⭐⭐⭐" };
 
   const homeworks = items
     .filter(hw => hw.deadline && new Date(hw.deadline) >= today && new Date(hw.deadline) <= horizon)
@@ -180,10 +179,11 @@ async function fetchHomeworks() {
       type: "exercice"
     }));
 
-  console.log(`✅ ${homeworks.length} devoirs récupérés (15-21 prochains jours).`);
+  console.log(`✅ ${homeworks.length} devoirs récupérés.`);
   pronote.logout?.(session);
   return homeworks;
 }
+
 // ============================================
 // 2. ANALYSER LES DEVOIRS
 // ============================================
@@ -388,6 +388,11 @@ async function main() {
 }
 
 main().catch(error => {
-  console.error("❌ ERREUR FATALE:", error && error.stack ? error.stack : error);
+  console.error("❌ ERREUR FATALE:");
+  if (error instanceof Error) {
+    console.error(error.stack || error.message);
+  } else {
+    console.error(error);
+  }
   process.exit(1);
 });
