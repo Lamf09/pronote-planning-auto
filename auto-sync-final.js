@@ -144,101 +144,53 @@ async function findPageByProperty(databaseId, schema, propertyName, value) {
 }
 
 // ============================================
-// 1. RÉCUPÉRER LES DEVOIRS (Pawnote — API officielle)
+// 1. RÉCUPÉRER LES DEVOIRS (base Notion "Devoirs" — saisie manuelle)
 // ============================================
-function normalizePronoteUrl(rawUrl) {
-  let parsed;
-  try {
-    parsed = new URL(String(rawUrl).trim());
-  } catch {
-    throw new Error(`❌ PRONOTE_URL invalide : ${rawUrl}`);
-  }
-  if (!/^https?:$/.test(parsed.protocol)) {
-    throw new Error(`❌ PRONOTE_URL doit utiliser http(s) : ${rawUrl}`);
-  }
-  // Conserve la page telle quelle (eleve.html OU mobile.eleve.html)
-  parsed.search = '';
-  parsed.hash = '';
-  if (!/\/pronote\/(?:mobile\.)?eleve\.html?$/i.test(parsed.pathname)) {
-    throw new Error(
-      `❌ PRONOTE_URL doit pointer vers l'espace Pronote, ex : https://etablissement.index-education.net/pronote/mobile.eleve.html`
-    );
-  }
-  return parsed.toString();
-}
-
-async function checkPronoteUrl(url) {
-  // Test HTTP avant connexion : distingue une URL invalide d'un problème d'identifiants
-  const response = await fetch(url, { method: 'GET', redirect: 'manual' });
-  if (response.status >= 300 && response.status < 400) {
-    console.log(`↪️ Pronote redirige vers : ${response.headers.get('location')}`);
-  }
-  if (response.status === 404) {
-    throw new Error(`❌ URL Pronote introuvable (404) : ${url}`);
-  }
-  console.log(`🌐 URL Pronote accessible : HTTP ${response.status}`);
+function readProp(page, name) {
+  const p = page.properties && page.properties[name];
+  if (!p) return null;
+  const t = p.type;
+  if (t === 'title' && p.title && p.title[0]) return p.title[0].plain_text;
+  if (t === 'rich_text' && p.rich_text && p.rich_text[0]) return p.rich_text[0].plain_text;
+  if (t === 'select' && p.select) return p.select.name;
+  if (t === 'status' && p.status) return p.status.name;
+  if (t === 'date' && p.date && p.date.start) return p.date.start.slice(0, 10);
+  return null;
 }
 
 async function fetchHomeworks() {
-  console.log("📚 Récupération des devoirs depuis Pronote (Pawnote)...");
-  const pronote = await import('pawnote');
+  console.log("📚 Lecture des devoirs dans la base Notion \"Devoirs\"...");
+  const dbId = CONFIG.notion.databases.homework;
+  const schema = await getSchema(dbId, "Devoirs");
 
-  const url = normalizePronoteUrl(CONFIG.pronote.url);
-  await checkPronoteUrl(url);
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const todayKey = today.toISOString().split('T')[0];
 
-  const username = String(CONFIG.pronote.username || '').trim();
-  const password = String(CONFIG.pronote.password || '');
-  if (!username) throw new Error("❌ PRONOTE_USERNAME vide.");
-  if (!password) throw new Error("❌ PRONOTE_PASSWORD vide.");
+  // Devoirs dont la date limite est aujourd'hui ou après
+  const response = await notionApiCall('POST', `/databases/${dbId}/query`, {
+    filter: { property: "Date limite", date: { on_or_after: todayKey } }
+  });
 
-  console.log(`🔗 URL Pronote normalisée : ${url}`);
-  console.log(`👤 Utilisateur : ${username}`);
-
-  const session = pronote.createSessionHandle();
-  let connected = false;
-  try {
-    await pronote.loginCredentials(session, {
-      url,
-      username,
-      password,
-      deviceUUID: "pronote-planning-auto-9f2b",
-      kind: pronote.AccountKind.STUDENT
-    });
-    connected = true;
-    console.log("✅ Connecté à Pronote.");
-  } catch (error) {
-    const message = error && error.message ? error.message : String(error);
-    const name = error && error.constructor ? error.constructor.name : 'Erreur';
-    console.error("❌ Échec de connexion à Pronote.");
-    console.error(`   Type d'erreur : ${name}`);
-    console.error(`   Détail : ${message}`);
-    throw new Error(`Connexion Pronote impossible [${name}]: ${message}`);
+  const homeworks = [];
+  for (const page of response.results) {
+    const subject = readProp(page, "Subject") || "Sans matière";
+    const due_date = readProp(page, "Date limite");
+    if (!due_date) { console.log(`⚠️ Devoir "${subject}" sans Date limite (ignoré).`); continue; }
+    const description = readProp(page, "Description") || "";
+    const difficulty = readProp(page, "Difficulté") || "⭐⭐";
+    const type = readProp(page, "Type") || "exercice";
+    let id = readProp(page, "ID");
+    if (!id) {
+      id = `manual_${crypto.randomBytes(4).toString('hex')}`;
+      await notionApiCall('PATCH', `/pages/${page.id}`, {
+        properties: cleanProps({ "ID": buildProp(schema, "ID", id) })
+      });
+    }
+    homeworks.push({ id, subject, description, due_date, difficulty, type });
   }
 
-  try {
-    const items = await pronote.assignmentsFromWeek(session, 0, 3);
-    console.log(`🔎 ${items.length} devoirs trouvés (semaines 0 à 3).`);
-
-    const today = new Date(); today.setHours(0, 0, 0, 0);
-    const horizon = new Date(today); horizon.setDate(horizon.getDate() + 21);
-    const difficultyMap = { 1: "⭐", 2: "⭐⭐", 3: "⭐⭐⭐" };
-
-    const homeworks = items
-      .filter(hw => hw.deadline && new Date(hw.deadline) >= today && new Date(hw.deadline) <= horizon)
-      .map(hw => ({
-        id: `pronote_${hw.id}`,
-        subject: (hw.subject && hw.subject.name) || "Sans matière",
-        description: (hw.description || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim(),
-        due_date: new Date(hw.deadline).toISOString().split('T')[0],
-        difficulty: difficultyMap[hw.difficulty] || "⭐⭐",
-        type: "exercice"
-      }));
-
-    console.log(`✅ ${homeworks.length} devoirs récupérés.`);
-    return homeworks;
-  } finally {
-    if (connected) pronote.logout?.(session);
-  }
+  console.log(`✅ ${homeworks.length} devoirs actifs trouvés dans la base.`);
+  return homeworks;
 }
 
 // ============================================
